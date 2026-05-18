@@ -3,13 +3,8 @@
 #include "llvm/IR/Function.h"
 #include "llvm/Support/raw_ostream.h"
 
-// Fondamentale per i loop
 #include "llvm/Analysis/LoopInfo.h" 
-
-// Fondamentale per gestire i dominatori
 #include "llvm/IR/Dominators.h"
-
-// Per poter scorrere deminator tree tramite depth_first o breadth_first
 #include "llvm/ADT/BreadthFirstIterator.h"
 
 using namespace llvm;
@@ -46,8 +41,8 @@ struct LoopPass : public PassInfoMixin<LoopPass> {
 
         // Itero sui loop trovati tramite LI
         // for(Loop *L : LI).
-        //In LLVM, iterare in quel modo sull'oggetto LoopInfo ti restituisce 
-        //esclusivamente i loop di livello zero (i "top-level loops") ignorando quindi
+        // In LLVM, iterare in quel modo sull'oggetto LoopInfo ti restituisce 
+        // esclusivamente i loop di livello zero (i "top-level loops") ignorando quindi
         // i loop annidati
 
 
@@ -111,15 +106,13 @@ struct DomTreePass : public PassInfoMixin<DomTreePass> {
             errs() << "    "; 
         }
 
-        // Estraggo e stampo il Basic Block
         BasicBlock *BB = Node->getBlock(); // ottengo il BB a partire dalla strutture Node
         if (BB) {
             errs() << "|-- ";
-            BB->printAsOperand(errs(), false); // Stampa il nome del blocco (es. %3)
+            BB->printAsOperand(errs(), false); 
             errs() << "\n";
         }
 
-        // Itero sui figli diretti nell'albero dei dominatori
         for (DomTreeNode *Child : Node->children()) {
             printDomTree(Child, level + 1); // Scendo di un livello
         }
@@ -128,13 +121,11 @@ struct DomTreePass : public PassInfoMixin<DomTreePass> {
     PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM) {
         errs() << "\n=== Dominator Tree per la funzione: " << F.getName() << " ===\n";
 
-        // Richiedo a LLVM di calcolare/fornirmi il Dominator Tree
         DominatorTree &DT = AM.getResult<DominatorTreeAnalysis>(F);
-        // prendo la root
         DomTreeNode *Root = DT.getRootNode();
 
         if (Root) {
-            printDomTree(Root, 0); // chiaramente parto dalla root
+            printDomTree(Root, 0); 
         } else {
             errs() << "Nessun albero dei dominatori trovato.\n";
         }
@@ -149,8 +140,8 @@ struct LoopInvariantCodeMotion : public PassInfoMixin<LoopInvariantCodeMotion> {
 
     bool isLoopInvariant(Instruction &I, Loop *L, std::vector<Instruction*> &LoopInvCandidates){
 
-        // Ci concentriamo su operazioni matematica e bit a bit.
-        // Operazioni che gestiscono flusso (branch) o memoria romperebbe la semantica del loop.
+        // Resto conservativo, ci concentriamo su operazioni matematiche e bit a bit.
+        // Non considero operazioni che gestiscono il Control Flow (branch), di memoria o 'phi'.
         if(!I.isBinaryOp() && !I.isShift() && !I.isCast()){
             return false;
         }
@@ -159,13 +150,13 @@ struct LoopInvariantCodeMotion : public PassInfoMixin<LoopInvariantCodeMotion> {
         for(Use &Op : I.operands()){
             Value *Operand = Op.get();
 
-            // Se operando è una costante (es: E = 4) allora è Loop-Invariant
+            // Se operando è una costante (es: E = 4) allora è automaticamente Loop-Invariant
             if(isa<Constant>(Operand)){
                 continue;
             }
 
             // Se un operando è un'argomento della funzione, automaticamente possiamo constatare che la sua reaching
-            // def è fuori dal loop, quindi è Loop-Invariant
+            // def è sicuramente fuori dal loop, quindi è Loop-Invariant
             if(isa<Argument>(Operand)){
                 continue;
             }
@@ -179,7 +170,7 @@ struct LoopInvariantCodeMotion : public PassInfoMixin<LoopInvariantCodeMotion> {
                     continue;
                 }
                 
-                // Se arriviamo qua vuol dire che appartiene al loop, dobbiam controllare se la sua reaching def appartenente
+                // Se arriviamo qua vuol dire che potrebbe apprtenere al loop. Dobbiamo controllare se la sua unica (SSA) reaching def appartenente
                 // al loop è già stata marcata come Loop-Invariant (è presente nel vettore 'LoopInvCandidates'), se è cosi 
                 // allora anch'essa è loop-invariant, altrimenti no.
                 if(std::find(LoopInvCandidates.begin(), LoopInvCandidates.end(), OpInstr) != LoopInvCandidates.end()){
@@ -199,8 +190,8 @@ struct LoopInvariantCodeMotion : public PassInfoMixin<LoopInvariantCodeMotion> {
 
         BasicBlock *InstrBB = I->getParent();
 
-        SmallVector<BasicBlock *, 8> ExitingBlocks;
         // riempiamo la struttura precedente con gli exiting block del loop
+        SmallVector<BasicBlock *, 8> ExitingBlocks;
         L->getExitingBlocks(ExitingBlocks);
 
         for(BasicBlock *ExitBB : ExitingBlocks){
@@ -212,13 +203,14 @@ struct LoopInvariantCodeMotion : public PassInfoMixin<LoopInvariantCodeMotion> {
         }
 
 
-        // Dal momento che la IR è una SSA la condizione per la code motion riguardo all'unicità
+        // Considerazione: dal momento che la IR è una SSA la condizione per la code motion riguardo all'unicità
         // della definizione di un LHS è già garantita
 
 
         for(User *U : I->users()){ // .users ci restiuisce tutti i 'Value' che usano il LHS di I
-            // castiamo ad Instruction
+            // castiamo da Value ad Instruction per ottenre maggiori informazioni
             if(Instruction *UserInstr = dyn_cast<Instruction>(U)){
+                // Prendiamo il BB a cui appartiene
                 BasicBlock *UserBlock = UserInstr->getParent();
 
                 // ci interessano solo gli usi all'interno del loop
@@ -230,7 +222,6 @@ struct LoopInvariantCodeMotion : public PassInfoMixin<LoopInvariantCodeMotion> {
                     }
                 }
             }
-
         }  
         return true;
     }
@@ -241,7 +232,9 @@ struct LoopInvariantCodeMotion : public PassInfoMixin<LoopInvariantCodeMotion> {
 
         errs() << "-- Inizio LICM per la funzone: " << F.getName() << " --\n";
 
-        for(Loop *L : LI.getLoopsInPreorder()){
+        // visita in post-order dei loop, prendo tutti i loop (anche innestati) dal più esterno al più interno e li analizzo al contrario
+        auto Loops = LI.getLoopsInPreorder();
+        for(Loop *L : llvm::reverse(Loops)){
             // è fondamentale che ogni loop sia in forma normale, fondamentale la presenza di un pre-header
             if(!L->isLoopSimplifyForm()){
                 errs() << "-> Il loop " << L->getName() << " non è in forma normale, passo al prossimo! \n";
@@ -263,7 +256,7 @@ struct LoopInvariantCodeMotion : public PassInfoMixin<LoopInvariantCodeMotion> {
                 for (BasicBlock *BB : L->getBlocks()) {
                     for (Instruction &I : *BB) {
                         
-                        // e l'abbiamo già inserita nei candidati, la saltiamo
+                        // L'abbiamo già inserita nei candidati, la saltiamo
                         if (std::find(LoopInvCandidates.begin(), LoopInvCandidates.end(), &I) != LoopInvCandidates.end()) {
                             continue;
                         }
