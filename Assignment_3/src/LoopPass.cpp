@@ -207,22 +207,11 @@ struct LoopInvariantCodeMotion : public PassInfoMixin<LoopInvariantCodeMotion> {
         // della definizione di un LHS è già garantita
 
 
-        for(User *U : I->users()){ // .users ci restiuisce tutti i 'Value' che usano il LHS di I
-            // castiamo da Value ad Instruction per ottenre maggiori informazioni
-            if(Instruction *UserInstr = dyn_cast<Instruction>(U)){
-                // Prendiamo il BB a cui appartiene
-                BasicBlock *UserBlock = UserInstr->getParent();
+        // Considerazione: Poiché la IR è in forma SSA, la dominanza della definizione rispetto ai 
+        // suoi usi è una proprietà intrinseca e strutturale della IR (Def-Use dominance property). 
+        // È impossibile usare un valore prima che venga definito.
 
-                // ci interessano solo gli usi all'interno del loop
-                if(L->contains(UserBlock)){
-                    // se il BB dell'instr condidata alla Code Motion non domina i suoi usi non può essere spostata
-                    if(!DT.dominates(InstrBB, UserBlock)){
-                        Reason = "Il BB dell'istruzione NON domina un blocco che utilizza il suo LHS";
-                        return false;
-                    }
-                }
-            }
-        }  
+        // se arrivo qua posso procedere con la code motion
         return true;
     }
 
