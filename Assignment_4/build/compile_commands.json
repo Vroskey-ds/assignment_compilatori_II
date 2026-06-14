@@ -1,0 +1,8 @@
+[
+{
+  "directory": "/home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/build",
+  "command": "/usr/bin/c++ -DLoopFusion_EXPORTS -isystem /home/marcodondi/Workspace/Compilatori-II/LLVM-19.1.7-Linux-X64/include  -fno-rtti -std=gnu++17 -fPIC -o CMakeFiles/LoopFusion.dir/LoopFusion.cpp.o -c /home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/src/LoopFusion.cpp",
+  "file": "/home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/src/LoopFusion.cpp",
+  "output": "CMakeFiles/LoopFusion.dir/LoopFusion.cpp.o"
+}
+]
