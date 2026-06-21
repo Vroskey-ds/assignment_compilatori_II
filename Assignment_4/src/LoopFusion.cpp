@@ -33,13 +33,14 @@ struct LoopFusion : public PassInfoMixin<LoopFusion> {
             BasicBlock *Preheader0 = L0->getLoopPreheader();
 
             BasicBlock *NonLoopSucc = nullptr;
+            // individuo il BB al quale la branch nel guardBB di l0 salta se il loop non deve eseguire neanche una volta
             if(G0->getSuccessor(0) == Preheader0){
                 NonLoopSucc = G0->getSuccessor(1);
             } else {
                 NonLoopSucc = G0->getSuccessor(0);
             }
 
-            BasicBlock *L1Guard = L1->getLoopGuardBranch()->getParent();
+            BasicBlock *L1Guard = L1->getLoopGuardBranch()->getParent(); // individuo il BB di guardia del loop1
             return NonLoopSucc == L1Guard;
         }
 
@@ -57,7 +58,7 @@ struct LoopFusion : public PassInfoMixin<LoopFusion> {
         return false;
     }
 
-    // CONDIZIONE 2) STESSO NUMERO DI ITERAZIONI (trip count)
+    // CONDIZIONE 2) STESSO NUMERO DI ITERAZIONI 
     bool sameTripCount(Loop *L0, Loop *L1, ScalarEvolution &SE){
 
         // getBackedgeTakenCount restituisce un'espressione SCEV.
@@ -72,14 +73,16 @@ struct LoopFusion : public PassInfoMixin<LoopFusion> {
         return TripCount0 == TripCount1;
     }
 
+
     // CONDIZIONE 3) CONTROL FLOW EQUIVALENCE
     bool areControlFlowEquivalent(Loop *L0, Loop *L1, DominatorTree &DT, PostDominatorTree &PDT){
+    
+        // prendo il considerazione il caso Guarded. Se sono guarded devo analizzare l'equivalenza usando i blocchi di guardia dei loop
+        BasicBlock *BlockToCheck0 = L0->isGuarded() ? L0->getLoopGuardBranch()->getParent() : L0->getHeader();
+        BasicBlock *BlockToCheck1 = L1->isGuarded() ? L1->getLoopGuardBranch()->getParent() : L1->getHeader();
 
-        BasicBlock *Header0 = L0->getHeader();
-        BasicBlock *Header1 = L1->getHeader();
-
-        bool dominates = DT.dominates(Header0, Header1);
-        bool postDominates = PDT.dominates(Header1, Header0);
+        bool dominates = DT.dominates(BlockToCheck0, BlockToCheck1);
+        bool postDominates = PDT.dominates(BlockToCheck1, BlockToCheck0);
 
         return dominates && postDominates;
     }
@@ -126,7 +129,7 @@ struct LoopFusion : public PassInfoMixin<LoopFusion> {
                 // controllo dipendenza negativa per loop innestati
                 for (unsigned lvl = 1; lvl <= Levels; ++lvl) {
                     unsigned Dir = Dep->getDirection(lvl);
-                    if (Dir & Dependence::DVEntry::GT) { // se la dir essite ed è backward (greater then) allora non posso fondere i loop
+                    if (Dir & Dependence::DVEntry::GT) { // se la dir è backward (greater then) allora non posso fondere i loop
                         errs() << "    [!] Dipendenza backward (distanza negativa) trovata.\n";
                         return false;
                     }
@@ -163,10 +166,9 @@ struct LoopFusion : public PassInfoMixin<LoopFusion> {
         if(!IV0 || !IV1){
             return false;
         }
-        // qui unifico tramite replace
         IV1->replaceAllUsesWith(IV0);
 
-        // Passo 2) Ricucio i due loop
+        // Passo 2) Recupero i BasicBlock chiave
         BasicBlock *Header0 = L0->getHeader();
         BasicBlock *Header1 = L1->getHeader();
         BasicBlock *Latch0  = L0->getLoopLatch();
@@ -185,25 +187,35 @@ struct LoopFusion : public PassInfoMixin<LoopFusion> {
             return false;
         }
 
+        // Gestiamo il caso guarded
+        /*if (L0->isGuarded() && L1->isGuarded()) {
+            BranchInst *G0 = L0->getLoopGuardBranch();
+            BasicBlock *L1GuardBB = L1->getLoopGuardBranch()->getParent();
+            
+            // La branch della Guardia di L0 ha due destinazioni (Preheader0 o L1GuardBB).
+            G0->replaceUsesOfWith(L1GuardBB, ExitL1);
+        }*/
+
+        // Passo 3) Ricucio i due loop (CFG Rewiring)
+        
         // L'header di L0 esce verso l'USCITA di L1
-        Header0->getTerminator()->replaceUsesOfWith(ExitSucc0, ExitL1); // bypasso il preheader e lo taglio fuori
+        Header0->getTerminator()->replaceUsesOfWith(ExitSucc0, ExitL1);
         ExitL1->replacePhiUsesWith(Header1, Header0);
 
         // La fine del body di L0 va al BODY di L1
-        Body0Last->getTerminator()->replaceUsesOfWith(Latch0, Body1Entry); // colleghiamo body0 a body1
+        Body0Last->getTerminator()->replaceUsesOfWith(Latch0, Body1Entry);
         Body1Entry->replacePhiUsesWith(Header1, Body0Last);
 
         // La fine del body di L1 va al LATCH di L0
         Body1Last->getTerminator()->replaceUsesOfWith(Latch1, Latch0);
         Latch0->replacePhiUsesWith(Body0Last, Body1Last);
 
-        // Scollego il body dall'header di L1 (diventa dead code)
+        // Scollego il body dall'header di L1
         Header1->getTerminator()->replaceUsesOfWith(Body1Entry, Latch1);
         Latch1->replacePhiUsesWith(Body1Last, Header1);
 
         return true;
     }
-
 
     PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM) {
 
@@ -217,11 +229,9 @@ struct LoopFusion : public PassInfoMixin<LoopFusion> {
 
         // analizzo tutti i loop innestati, non solo top-level
         SmallVector<Loop *> Loops;
-        for (Loop *TopLevelLoop : LI) {
-            for (Loop *L : depth_first(TopLevelLoop)) {
-                if (L->isInnermost()) { // se è un loop "fogliare", quindi senza un loop all'interno, lo considero per la loop fusion (conservativo)
-                    Loops.push_back(L);
-                }
+        for (Loop *L : LI.getLoopsInPreorder()) {
+            if (L->isInnermost()) { // se è un loop "fogliare", quindi senza un loop all'interno, lo considero per la loop fusion (conservativo)
+                Loops.push_back(L);
             }
         }
 
@@ -236,8 +246,9 @@ struct LoopFusion : public PassInfoMixin<LoopFusion> {
             Loop *L0 = Loops[i];
             Loop *L1 = Loops[i + 1];
 
-            // dal momento che loops non per forza contiene loop fratelli, controllo per sicurezza la fratellanza, ovvero se sono allo stesso livello.
-            // se ho due loop top-level, questo if viene ignorato.
+            // Dal momento che loops non per forza contiene loop fratelli, controllo per sicurezza la fratellanza, ovvero se sono allo stesso livello.
+            // se non sono fratelli abortisco in anticipo e risparmio computazionale
+            // Se ho due loop top-level, questo if viene ignorato.
             if (L0->getParentLoop() != L1->getParentLoop()) {
                 errs() << "    [!] L0 e L1 non sono fratelli (padri diversi). Salto.\n";
                 continue; 
@@ -266,7 +277,7 @@ struct LoopFusion : public PassInfoMixin<LoopFusion> {
                 errs() << "  => Tutte le condizioni OK: FUSIONE IN CORSO...\n";
                 if(fuseLoops(L0, L1)){
                     Changed = true;
-                    errs() << "  [***] FUSIONE COMPLETATA!\n";
+                    errs() << "FUSIONE COMPLETATA!\n";
                     break; // appena fondiamo terminiamo il passo
                 }
             } else {

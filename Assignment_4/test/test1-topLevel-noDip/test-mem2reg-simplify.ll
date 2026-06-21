@@ -1,48 +1,48 @@
-; ModuleID = 'test1-raw.ll'
-source_filename = "test1.c"
+; ModuleID = 'test-raw.ll'
+source_filename = "test.c"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
 
 ; Function Attrs: noinline nounwind uwtable
 define dso_local void @test_indipendente(ptr noalias noundef %0, ptr noalias noundef %1, i32 noundef %2) #0 {
-  br label %4
+  br label %4 -> preheader L0
 
-4:                                                ; preds = %10, %3
+4:                                                ; preds = %10, %3  -> header L0
   %.01 = phi i32 [ 0, %3 ], [ %11, %10 ]
   %5 = icmp slt i32 %.01, %2
   br i1 %5, label %6, label %12
 
-6:                                                ; preds = %4
+6:                                                ; preds = %4  -> body L=
   %7 = mul nsw i32 %.01, 2
   %8 = sext i32 %.01 to i64
   %9 = getelementptr inbounds i32, ptr %0, i64 %8
   store i32 %7, ptr %9, align 4
   br label %10
 
-10:                                               ; preds = %6
+10:                                               ; preds = %6  -> latch L0
   %11 = add nsw i32 %.01, 1
   br label %4, !llvm.loop !6
 
-12:                                               ; preds = %4
+12:                                               ; preds = %4  -> exit block L0 e Preheader L1
   br label %13
 
-13:                                               ; preds = %19, %12
+13:                                               ; preds = %19, %12  -> header L1
   %.0 = phi i32 [ 0, %12 ], [ %20, %19 ]
   %14 = icmp slt i32 %.0, %2
   br i1 %14, label %15, label %21
 
-15:                                               ; preds = %13
+15:                                               ; preds = %13  -> body L1
   %16 = add nsw i32 %.0, 5
   %17 = sext i32 %.0 to i64
   %18 = getelementptr inbounds i32, ptr %1, i64 %17
   store i32 %16, ptr %18, align 4
   br label %19
 
-19:                                               ; preds = %15
+19:                                               ; preds = %15  -> latch L1
   %20 = add nsw i32 %.0, 1
   br label %13, !llvm.loop !8
 
-21:                                               ; preds = %13
+21:                                               ; preds = %13  -> exit Block l1
   ret void
 }
 
