@@ -1,9 +1,0 @@
-/home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/build/CMakeFiles/intrinsics_gen.dir
-/home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/build/CMakeFiles/omp_gen.dir
-/home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/build/CMakeFiles/acc_gen.dir
-/home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/build/CMakeFiles/ARMTargetParserTableGen.dir
-/home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/build/CMakeFiles/AArch64TargetParserTableGen.dir
-/home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/build/CMakeFiles/RISCVTargetParserTableGen.dir
-/home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/build/CMakeFiles/LoopFusion.dir
-/home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/build/CMakeFiles/edit_cache.dir
-/home/marcodondi/Workspace/Compilatori-II/Laboratori/assignment_compilatori_II/Assignment_4/build/CMakeFiles/rebuild_cache.dir
