@@ -1,4 +1,4 @@
-; ModuleID = 'test-mem2regSimplify.ll'
+; ModuleID = 'test-mem2reg-simplify.ll'
 source_filename = "test.c"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -15,26 +15,26 @@ define dso_local void @test_innestato_indipendente(ptr noalias noundef %0, ptr n
 7:                                                ; preds = %5
   br label %8
 
-8:                                                ; preds = %14, %7
+8:                                                ; preds = %14, %7 -> header L0
   %.01 = phi i32 [ 0, %7 ], [ %15, %14 ]
   %9 = icmp slt i32 %.01, %2
-  br i1 %9, label %10, label %25
+  br i1 %9, label %10, label %25  ; -> punta a exitBlock L1
 
-10:                                               ; preds = %8
+10:                                               ; preds = %8 -> body L0
   %11 = add nsw i32 %.02, %.01
   %12 = sext i32 %.01 to i64
   %13 = getelementptr inbounds i32, ptr %0, i64 %12
   store i32 %11, ptr %13, align 4
-  br label %19
+  br label %19 ; -> punta a body L1
 
-14:                                               ; preds = %19
+14:                                               ; preds = %19 -> latch L0
   %15 = add nsw i32 %.01, 1
   br label %8, !llvm.loop !6
 
-16:                                               ; No predecessors!
+16:                                               ; No predecessors! -> preheader L1 tagliato fuori
   br label %17
 
-17:                                               ; preds = %23, %16
+17:                                               ; preds = %23, %16 -> header L1 tagliato fuori
   %.0 = phi i32 [ 0, %16 ], [ %24, %23 ]
   %18 = icmp slt i32 %.01, %2
   br i1 %18, label %23, label %25
@@ -44,9 +44,9 @@ define dso_local void @test_innestato_indipendente(ptr noalias noundef %0, ptr n
   %21 = sext i32 %.01 to i64
   %22 = getelementptr inbounds i32, ptr %1, i64 %21
   store i32 %20, ptr %22, align 4
-  br label %14
+  br label %14 ; -> punta a latch L0
 
-23:                                               ; preds = %17
+23:                                               ; preds = %17 -> punta a Header L1, tagliato fuori anche il latch L1
   %24 = add nsw i32 %.01, 1
   br label %17, !llvm.loop !8
 

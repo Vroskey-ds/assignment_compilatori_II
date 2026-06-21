@@ -1,5 +1,5 @@
-; ModuleID = 'test1-mem2regSimplify.ll'
-source_filename = "test1.c"
+; ModuleID = 'test-mem2reg-simplify.ll'
+source_filename = "test.c"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
 
@@ -10,23 +10,23 @@ define dso_local void @test_indipendente(ptr noalias noundef %0, ptr noalias nou
 4:                                                ; preds = %10, %3
   %.01 = phi i32 [ 0, %3 ], [ %11, %10 ]
   %5 = icmp slt i32 %.01, %2
-  br i1 %5, label %6, label %21
+  br i1 %5, label %6, label %21   -> ora header L0 punto a exitBlock L1 (%21)
 
 6:                                                ; preds = %4
   %7 = mul nsw i32 %.01, 2
   %8 = sext i32 %.01 to i64
   %9 = getelementptr inbounds i32, ptr %0, i64 %8
   store i32 %7, ptr %9, align 4
-  br label %15
+  br label %15      -> bodyL0 collegato a bodyL1
 
-10:                                               ; preds = %15
+10:                                               ; preds = %15  -> latch L0
   %11 = add nsw i32 %.01, 1
   br label %4, !llvm.loop !6
 
-12:                                               ; No predecessors!
+12:                                               ; No predecessors!  -> preheader L1 tagliato fuori
   br label %13
 
-13:                                               ; preds = %19, %12
+13:                                               ; preds = %19, %12  -> header L1 tagliato fuori, punto a latch L1
   %.0 = phi i32 [ 0, %12 ], [ %20, %19 ]
   %14 = icmp slt i32 %.01, %2
   br i1 %14, label %19, label %21
@@ -36,14 +36,14 @@ define dso_local void @test_indipendente(ptr noalias noundef %0, ptr noalias nou
   %17 = sext i32 %.01 to i64
   %18 = getelementptr inbounds i32, ptr %1, i64 %17
   store i32 %16, ptr %18, align 4
-  br label %10
+  br label %10              -> punto a latch L0
 
-19:                                               ; preds = %13
+19:                                               ; preds = %13  -> latch1 punto a Header L1
   %20 = add nsw i32 %.01, 1
   br label %13, !llvm.loop !8
 
-21:                                               ; preds = %4, %13
-  ret void
+21:                                               ; preds = %4, %13   -> exitBlock LoopFuso
+  ret void  
 }
 
 attributes #0 = { noinline nounwind uwtable "frame-pointer"="all" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" }
