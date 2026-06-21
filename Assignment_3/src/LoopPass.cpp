@@ -47,6 +47,7 @@ struct LoopPass : public PassInfoMixin<LoopPass> {
 
 
         // per ottenere TUTTI loop (anche innestati):
+        // loop è una classe che rappresenta un natural loop
         for(Loop *L : LI.getLoopsInPreorder()){
             loopCounter++;
             errs() << "Il loop numero " << loopCounter;
@@ -93,6 +94,8 @@ struct LoopPass : public PassInfoMixin<LoopPass> {
      
 };
 
+// Qui uso il DominatorTreeAnalysis per ottenere il dominator tree già 
+// Calcolato dall'AM con DFS pre-order 
 struct DomTreePass : public PassInfoMixin<DomTreePass> {
 
     // Funzione ricorsiva di supporto per stampare l'albero visivamente
@@ -136,134 +139,169 @@ struct DomTreePass : public PassInfoMixin<DomTreePass> {
     }
 };
 
+
+// Obiettivo: identificare istruzioni il cui valore non cambia tra iterazioni
+// (loop-invariant) e spostarle nel preheader, in modo che vengano eseguite
+// una sola volta invece di N volte.
+//
+// L'algoritmo si articola in tre fasi:
+//   1. isLoopInvariant  → determina se un'istruzione è candidata
+//   2. isSafeToMove     → verifica che spostarla non alteri la semantica
+//   3. Code Motion      → sposta fisicamente le istruzioni nel preheader
+// =============================================================================
 struct LoopInvariantCodeMotion : public PassInfoMixin<LoopInvariantCodeMotion> {
 
+    // Il vettore 'LoopInvCandidates' accumula le istruzioni già identificate
+    // come invarianti nei passaggi precedenti del do-while nel chiamante.
     bool isLoopInvariant(Instruction &I, Loop *L, std::vector<Instruction*> &LoopInvCandidates){
 
-        // Resto conservativo, ci concentriamo su operazioni matematiche e bit a bit.
-        // Non considero operazioni che gestiscono il Control Flow (branch), di memoria o 'phi'.
+        // SCELTA CONSERVATIVA: limitiamo l'analisi a operazioni aritmetiche,
+        // shift e cast. Escludiamo esplicitamente:
+        //   - branch/terminatori  → gestiscono il control flow, non producono valori
+        //   - load/store          → dipendono dalla memoria, che il loop può modificare
+        //   - phi nodes           → per definizione aggregano valori di iterazioni diverse
         if(!I.isBinaryOp() && !I.isShift() && !I.isCast()){
             return false;
         }
 
-        // Ci concentriamo sul RHS dell'instruzione
+        // Analizziamo ogni operando (RHS) dell'istruzione.
+        // Basta che UN operando non sia invariant perché l'intera istruzione non lo sia.
         for(Use &Op : I.operands()){
             Value *Operand = Op.get();
 
-            // Se operando è una costante (es: E = 4) allora è automaticamente Loop-Invariant
+            // Costante (es. il letterale '4')
+            // Per definizione non dipende dall'iterazione corrente.
             if(isa<Constant>(Operand)){
                 continue;
             }
 
-            // Se un operando è un'argomento della funzione, automaticamente possiamo constatare che la sua reaching
-            // def è sicuramente fuori dal loop, quindi è Loop-Invariant
+            // Argomento della funzione: 
+            // Viene fissato al momento della chiamata e non può essere
+            // riscritto dal loop, quindi la sua reaching def è sempre esterna.
             if(isa<Argument>(Operand)){
                 continue;
             }
 
-            // L'operando è il risultato di un istruzione precedente?
+            //Risultato di un'altra istruzione
             if(Instruction *OpInstr = dyn_cast<Instruction>(Operand)){
 
-                // Se il BB dell'instruzione per cui Operand è risultato, non appartiene al loop, allora la reaching def
-                // arriva da fuori il loop, quindi è Loop-Invariant
+                // La definizione si trova in un BB fuori dal loop.
+                // Poiché siamo in SSA, esiste una sola definizione: se è esterna
+                // al loop il suo valore non può essere modificato dal loop stesso.
                 if(!L->contains(OpInstr->getParent())){
                     continue;
                 }
-                
-                // Se arriviamo qua vuol dire che potrebbe apprtenere al loop. Dobbiamo controllare se la sua unica (SSA) reaching def appartenente
-                // al loop è già stata marcata come Loop-Invariant (è presente nel vettore 'LoopInvCandidates'), se è cosi 
-                // allora anch'essa è loop-invariant, altrimenti no.
+
+                // La definizione è dentro il loop ma è già stata
+                // marcata loop-invariant in un'iterazione precedente del do-while.
+                // Questo permette la propagazione transitiva:
+                //   b = a*2  (invariant) → c = b+1 diventa invariant al giro dopo
                 if(std::find(LoopInvCandidates.begin(), LoopInvCandidates.end(), OpInstr) != LoopInvCandidates.end()){
                     continue;
                 }
 
+                // La definizione è dentro il loop e non è ancora invariant:
+                // l'operando dipende dall'iterazione, quindi l'istruzione non è invariant.
                 return false;
             }
-            
-            return false; // Se arriviamo qua l'operando non rispetta nessuna condizione di invarianza, quidni non è Loop-invariant
+
+            // L'operando non rientra in nessuno dei casi sopra: conservativamente non invariant.
+            return false;
         }
 
-        return true; // Se arriviamo qua tuti gli operandi hanno rispettato le condizioni, quindi l'istruzione è Loop-Invariant
+        // Tutti gli operandi hanno superato i controlli: l'istruzione è loop-invariant.
+        return true;
     }
 
+    // Essere loop-invariant NON è sufficiente per spostare un'istruzione.
+    // Dobbiamo assicrarci che se lo spostiamo, non esegua mai in un certo percorso
+    // quindi stare attenti alle condizioni all'interno del loop
+
+    // Condizione necessaria: il BB dell'istruzione deve DOMINARE tutti i blocchi
+    // di uscita del loop (exiting blocks).
     bool isSafeToMove(Instruction *I, DominatorTree &DT, Loop *L, std::string &Reason){
 
         BasicBlock *InstrBB = I->getParent();
 
-        // riempiamo la struttura precedente con gli exiting block del loop
+        // Raccogliamo tutti i blocchi da cui il loop può uscire (hanno un successore fuori dal loop).
         SmallVector<BasicBlock *, 8> ExitingBlocks;
         L->getExitingBlocks(ExitingBlocks);
 
         for(BasicBlock *ExitBB : ExitingBlocks){
-            // Verifica che il BB dell'instr candidata alla Code Motion domini TUTTE le uscite 
+            // Il BB dell'istruzione deve dominare OGNI exiting block.
+            // Se anche uno solo non è dominato, il movimento non è sicuro.
             if(!DT.dominates(InstrBB, ExitBB)){
                 Reason = "Il BB dell'istruzione NON domina tutte le uscite";
                 return false;
             }
         }
 
+        // NOTA: in SSA la definizione di un valore è unica per costruzione,
+        // Questo ci semplifica la vita e ci evita un controllo
 
-        // Considerazione: dal momento che la IR è una SSA la condizione per la code motion riguardo all'unicità
-        // della definizione di un LHS è già garantita
-
-
-        // Considerazione: Poiché la IR è in forma SSA, la dominanza della definizione rispetto ai 
-        // suoi usi è una proprietà intrinseca e strutturale della IR (Def-Use dominance property). 
-        // È impossibile usare un valore prima che venga definito.
-
-        // se arrivo qua posso procedere con la code motion
         return true;
     }
 
+    
+    // Ultima fase
     PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM) {
         LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
         DominatorTree &DT = AM.getResult<DominatorTreeAnalysis>(F);
 
         errs() << "-- Inizio LICM per la funzone: " << F.getName() << " --\n";
 
-        // visita in post-order dei loop, prendo tutti i loop (anche innestati) dal più esterno al più interno e li analizzo al contrario
         auto Loops = LI.getLoopsInPreorder();
         for(Loop *L : llvm::reverse(Loops)){
-            // è fondamentale che ogni loop sia in forma normale, fondamentale la presenza di un pre-header
+
+            // il loop deve essere in LoopSimplifyForm, ovvero avere:
+            //   - un unico preheader (BB che precede l'header con un solo successore)
+            //   - un unico latch    (BB che chiude il backedge verso l'header)
+            //   - exit block dedicati
+            // Senza preheader non avremmo un punto canonico dove inserire le istruzioni spostate.
             if(!L->isLoopSimplifyForm()){
                 errs() << "-> Il loop " << L->getName() << " non è in forma normale, passo al prossimo! \n";
                 continue;
             }
 
-            // Struttura dati dove inserire instr Loop-Invariant
-            std::vector<Instruction*> LoopInvCandidates; 
+            // Vettore che accumula le istruzioni loop-invariant identificate.
+            std::vector<Instruction*> LoopInvCandidates;
             bool changed;
 
             errs() << "-- Inizio fase di Loop-Invariant instruction check per il loop con Header: '";
             L->getHeader()->printAsOperand(errs(), false);
             errs() << "' ! --\n";
 
-            // iteriamo finchè non troviamo nuove istruzioni loop-invariant
+            // do-while iterativo invece di una singola passata lineare.
+            // Motivazione: la proprietà loop-invariant si propaga per transitività.
+            // Esempio:
+            //   iterazione 1: b = a*2  → marcata invariant
+            //   iterazione 2: c = b+1  → ora b è in LoopInvCandidates, quindi anche c è invariant
+           // e quindi si procede fino a convergenza
             do {
                 changed = false;
 
                 for (BasicBlock *BB : L->getBlocks()) {
                     for (Instruction &I : *BB) {
-                        
-                        // L'abbiamo già inserita nei candidati, la saltiamo
+
+                        // Evitiamo di riesaminare istruzioni già marcate invariant.
                         if (std::find(LoopInvCandidates.begin(), LoopInvCandidates.end(), &I) != LoopInvCandidates.end()) {
                             continue;
                         }
                         if (isLoopInvariant(I, L, LoopInvCandidates)) {
                             errs() << "-> L'istruzione <" << I << " > è Loop-Invariant! \n";
                             LoopInvCandidates.push_back(&I);
-                            changed = true; 
+                            changed = true; // almeno una nuova invariant trovata: ripetiamo
                         }
                     }
                 }
-            } while (changed);
+            } while (changed); // termina quando un'intera passata non produce nuove invarianti
 
             errs() << "-> Numero di istruzioni Loop-Invariant trovate: " << LoopInvCandidates.size() << "\n";
 
-            // Inizio Code Motion:
-            
+            // --- Code Motion ---
+
             BasicBlock *Preheader = L->getLoopPreheader();
-            // prendo ultima instr del preheader (tipicamente una branch all'header del loop)
+        
             Instruction *PreheaderTerminator = Preheader->getTerminator();
             int movedCount = 0;
 
@@ -274,9 +312,11 @@ struct LoopInvariantCodeMotion : public PassInfoMixin<LoopInvariantCodeMotion> {
             for(Instruction *I : LoopInvCandidates){
                 std::string Reason;
                 if(isSafeToMove(I, DT, L, Reason)){
-                    // possiamo procedere con lo spostamento, quindi la stacco dal BB di appartenenza
+                    // removeFromParent: stacca l'istruzione dal suo BB originale
+                    // senza distruggerla (i puntatori Use-Def rimangono validi).
                     I->removeFromParent();
-                    // Inseriamo prima del terminator del preheader
+                    // insertBefore: la reinserisce nel preheader immediatamente
+                    // prima del branch terminatore.
                     I->insertBefore(PreheaderTerminator);
 
                     errs() << "-> Spostamento istruzione <" << *I << "> nel preheader! \n";
